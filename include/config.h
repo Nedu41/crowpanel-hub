@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // Web arayuzu basliginda ve TFT ust seridinde gosterilir - tek kaynak burasi
-#define FW_VERSION "7.2.1-crow"
+#define FW_VERSION "7.4.0-crow"  // artirinca web Donanim > Surum gecmisi (HW_CHANGELOG) guncellenir
 
 // ---- Donanim ----
 // Pinler: board.h / docs/DONANIM.md
@@ -38,7 +38,7 @@ const unsigned long ALERT_TICKER_MS = 3600000UL;      // alt yazida (haber bandi
 
 // ---- Cihaz/role limitleri ----
 #define MAX_DEVICES 10
-#define MAX_RELAYS 2
+#define MAX_RELAYS 4  // LC Technology 4 kanal modulu icin; role sayisi cihazdan (status "relays") gelir, yoksa 2
 
 // ---- LittleFS dosyalari ----
 #define DEVICES_FILE "/devices.json"

@@ -1,4 +1,4 @@
-// HUB sayfaları: Ana (saat, hava, uyarı, haber), Lambalar, Efekt, Ayar.
+// HUB sayfaları: Ana (saat, hava, uyarı, haber), Lambalar, Ayar.
 // LVGL yalnızca ana döngü görevinden çağrılır; veri/ağ işleri diğer görevlerde (paylaşılan durum mutex'le okunur).
 #include "ui_hub.h"
 
@@ -12,7 +12,6 @@
 #include "events.h"
 #include "storage.h"
 #include "telegram.h"
-#include "efekt.h"
 #include "sky.h"
 #include "guncelle.h"
 #include "ui.h"
@@ -21,7 +20,7 @@
 #include "wifi_nets.h"
 
 static lv_obj_t* tv;
-static lv_obj_t *tabHome, *tabLamps, *tabFx, *tabSet;
+static lv_obj_t *tabHome, *tabLamps, *tabSet;
 
 // ------------------------------------------------------------------ yardımcılar
 static bool takeMutex(SemaphoreHandle_t m) { return m && xSemaphoreTake(m, pdMS_TO_TICKS(15)) == pdTRUE; }
@@ -346,13 +345,13 @@ static void tickHome() {
 
 // ------------------------------------------------------------------ LAMBALAR
 struct CardRef { int dev; int relay; };
-static CardRef refs[MAX_DEVICES][2];
+static CardRef refs[MAX_DEVICES][MAX_RELAYS];
 static lv_obj_t* lampBox;
 static lv_obj_t* lampInfo;
 static lv_obj_t* lampDot[MAX_DEVICES];
-static lv_obj_t* lampBtn[MAX_DEVICES][2];
+static lv_obj_t* lampBtn[MAX_DEVICES][MAX_RELAYS];
 static lv_obj_t* lampWifi[MAX_DEVICES];
-static lv_obj_t* lampSched[MAX_DEVICES][2];
+static lv_obj_t* lampSched[MAX_DEVICES][MAX_RELAYS];
 static int tmrIdx[MAX_DEVICES];
 static void onTimer(lv_event_t* e) { uiTimerOpen(*(int*)lv_event_get_user_data(e)); }
 static String lampSig;
@@ -370,8 +369,8 @@ static void ctlTask(void*) {
     if (ok && xSemaphoreTake(statusMutex, MUTEX_TIMEOUT) == pdTRUE) {
       JsonObject st = CURRENT_STATUS_DOC[c.name].as<JsonObject>();
       if (!st.isNull()) {
-        st[c.relay == 1 ? "r1_state" : "r2_state"] = c.on ? "ON" : "OFF";
-        st[c.relay == 1 ? "relay_1" : "relay_2"] = c.on ? 1 : 0;
+        st[String("r") + c.relay + "_state"] = c.on ? "ON" : "OFF";
+        st[String("relay_") + c.relay] = c.on ? 1 : 0;
       }
       xSemaphoreGive(statusMutex);
     }
@@ -422,7 +421,8 @@ static void tickLamps() {
   int n = 0;
   for (JsonObject d : arr) {
     if (n >= MAX_DEVICES) break;
-    sig += String((const char*)(d["name"] | "")) + "|";
+    String nm = d["name"] | "";
+    sig += nm + "#" + String(deviceRelayCount(nm)) + "|";  // role sayisi degisirse kartlar yeniden kurulur
     n++;
   }
   if (sig != lampSig) {  // cihaz listesi değişti: kartları yeniden kur
@@ -451,12 +451,14 @@ static void tickLamps() {
       lv_obj_set_style_text_font(uiBtnLabel(tb), &noto16, 0);
       lv_obj_add_event_cb(tb, onTimer, LV_EVENT_CLICKED, &tmrIdx[i]);
       lampWifi[i] = uiLabel(card, "", &noto16, C_DIM);
-      lv_obj_t* rr = uiRow(card);  // iki role yan yana
+      int rc = deviceRelayCount(String((const char*)(d["name"] | "")));
+      lv_obj_t* rr = uiRow(card);  // 1-2 role yan yana, 3-4 role 2x2
       lv_obj_set_style_pad_gap(rr, 4, 0);
-      for (int r = 0; r < MAX_RELAYS; r++) {
+      if (rc > 2) lv_obj_set_flex_flow(rr, LV_FLEX_FLOW_ROW_WRAP);
+      for (int r = 0; r < rc; r++) {
         refs[i][r] = {i, r + 1};
-        lampBtn[i][r] = uiBtn(rr, "", false, nullptr, LV_SIZE_CONTENT, 42);
-        lv_obj_set_flex_grow(lampBtn[i][r], 1);
+        lampBtn[i][r] = uiBtn(rr, "", false, nullptr, rc > 2 ? LV_PCT(48) : LV_SIZE_CONTENT, 42);
+        if (rc <= 2) lv_obj_set_flex_grow(lampBtn[i][r], 1);
         lv_obj_set_style_pad_hor(lampBtn[i][r], 4, 0);
         lv_obj_set_style_text_font(uiBtnLabel(lampBtn[i][r]), &noto16, 0);
         lv_obj_add_event_cb(lampBtn[i][r], onRelay, LV_EVENT_CLICKED, &refs[i][r]);
@@ -494,10 +496,10 @@ static void tickLamps() {
       }
       uiSetText(lampWifi[i], w);
     }
-    char sched[160] = "";
+    char sched[256] = "";
     for (int r = 0; r < MAX_RELAYS; r++) {
       if (!lampBtn[i][r]) continue;
-      String s = st.isNull() ? "OFFLINE" : String((const char*)(st[r == 0 ? "r1_state" : "r2_state"] | "OFFLINE"));
+      String s = st.isNull() ? "OFFLINE" : String((const char*)(st[String("r") + (r + 1) + "_state"] | "OFFLINE"));
       bool on = s == "ON";
       lv_obj_t* l = uiBtnLabel(lampBtn[i][r]);
       char bl[24];
@@ -534,97 +536,6 @@ static void tickLamps() {
   xSemaphoreGive(statusMutex);
 }
 
-// ------------------------------------------------------------------ EFEKT (yapay zeka efektleri, PC köprüsü)
-static lv_obj_t *fxDot, *fxStat, *fxHizLbl, *fxIsikLbl, *fxGrid, *fxSaveBtn, *fxHizSlider, *fxIsikSlider;
-static uint32_t fxListShown = 0;
-static char fxPending[32];
-
-static void onFxNewOk(const char* t) {
-  if (!*t) return;
-  efektUret(String(t));
-  efektEkranAc();
-}
-static void onFxNew(lv_event_t*) { uiPrompt("Nasıl bir efekt istersin?", "", false, onFxNewOk); }
-static void onFxPlay(lv_event_t* e) {
-  efektOynat(String((const char*)lv_event_get_user_data(e)));
-  efektEkranAc();
-}
-static void onFxDelOk() { efektSil(String(fxPending)); }
-static void onFxDel(lv_event_t* e) {
-  char b[80];
-  strlcpy(fxPending, (const char*)lv_event_get_user_data(e), sizeof(fxPending));
-  snprintf(b, sizeof(b), "\"%s\" silinsin mi?", fxPending);
-  uiConfirm(b, onFxDelOk);
-}
-static void onFxSaveOk(const char* t) { if (*t) efektKaydet(String(t)); }
-static void onFxSave(lv_event_t*) { uiPrompt("Son efektin adı", "", false, onFxSaveOk); }
-static void onFxTune(lv_event_t* e) {
-  float hiz = lv_slider_get_value(fxHizSlider) / 100.0f, isik = lv_slider_get_value(fxIsikSlider) / 100.0f;
-  char b[40];
-  snprintf(b, sizeof(b), "Hız (%.1fx)", hiz);
-  lv_label_set_text(fxHizLbl, b);
-  snprintf(b, sizeof(b), "Işık (%%%d)", (int)(isik * 100));
-  lv_label_set_text(fxIsikLbl, b);
-  if (lv_event_get_code(e) == LV_EVENT_RELEASED) efektAyar(hiz, isik);
-}
-static void onFxStop(lv_event_t*) { efektDurdur(); }
-
-static void buildFx() {
-  lv_obj_t* c = uiCard(tabFx);
-  lv_obj_t* r = uiRow(c);
-  fxDot = dot(r);
-  fxStat = uiLabel(r, "PC köprüsü aranıyor…", &noto20, C_TEXT);
-  lv_obj_set_flex_grow(fxStat, 1);
-  uiBtn(r, "Yeni efekt", true, onFxNew, LV_SIZE_CONTENT, 48);
-
-  lv_obj_t* fc = uiCard(tabFx);
-  uiLabel(fc, "Kayıtlı efektler (uzun bas: sil)", &noto16, C_DIM);
-  fxGrid = lv_obj_create(fc);
-  lv_obj_set_width(fxGrid, LV_PCT(100));
-  lv_obj_set_height(fxGrid, LV_SIZE_CONTENT);
-  lv_obj_set_style_bg_opa(fxGrid, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(fxGrid, 0, 0);
-  lv_obj_set_style_pad_all(fxGrid, 0, 0);
-  lv_obj_set_style_pad_gap(fxGrid, 8, 0);
-  lv_obj_set_flex_flow(fxGrid, LV_FLEX_FLOW_ROW_WRAP);
-  lv_obj_remove_flag(fxGrid, LV_OBJ_FLAG_SCROLLABLE);
-  fxSaveBtn = uiBtn(fc, "Son efekti kaydet", false, onFxSave, LV_PCT(100), 48);
-
-  lv_obj_t* sc = uiCard(tabFx);
-  fxHizLbl = uiLabel(sc, "Hız (1.0x)", &noto20, C_TEXT);
-  fxHizSlider = uiSlider(sc, 10, 400, 100, C_CYAN);
-  fxIsikLbl = uiLabel(sc, "Işık (%100)", &noto20, C_TEXT);
-  fxIsikSlider = uiSlider(sc, 10, 200, 100, C_ORANGE);
-  for (lv_obj_t* s : {fxHizSlider, fxIsikSlider}) {
-    lv_obj_add_event_cb(s, onFxTune, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(s, onFxTune, LV_EVENT_RELEASED, nullptr);
-  }
-  uiBtn(sc, "Durdur", false, onFxStop, LV_PCT(100), 48);
-}
-
-static void tickFx() {
-  bool ok = efektSt.ok;
-  setDot(fxDot, ok);
-  char b[96];
-  if (!ok) snprintf(b, sizeof(b), "PC köprüsü yok (efekt_koprusu.py açık olmalı)");
-  else if (!strcmp(efektSt.durum, "uretiyor")) snprintf(b, sizeof(b), "Köprü bağlı - efekt üretiliyor…");
-  else if (!strcmp(efektSt.durum, "hata")) snprintf(b, sizeof(b), "Köprü bağlı - son üretim başarısız");
-  else snprintf(b, sizeof(b), "Köprü bağlı");
-  uiSetText(fxStat, b);
-  if (fxListShown != efektSt.listeSurum) {
-    fxListShown = efektSt.listeSurum;
-    lv_obj_clean(fxGrid);
-    static char names[24][32];
-    int n = efektListe(names, 24);
-    for (int i = 0; i < n; i++) {
-      lv_obj_t* bt = uiBtn(fxGrid, names[i], false, nullptr, LV_SIZE_CONTENT, 52);
-      lv_obj_add_event_cb(bt, onFxPlay, LV_EVENT_SHORT_CLICKED, names[i]);
-      lv_obj_add_event_cb(bt, onFxDel, LV_EVENT_LONG_PRESSED, names[i]);
-    }
-    if (n == 0) uiLabel(fxGrid, "Henüz kayıtlı efekt yok", &noto16, C_DIM);
-  }
-}
-
 // ------------------------------------------------------------------ AYAR
 static lv_obj_t *setInfo, *blLbl;
 
@@ -652,42 +563,6 @@ static void onTgTok(const char* t) {
   uiPrompt("Telegram sohbet (chat) no", telegramChatId().c_str(), false, onTgChat);
 }
 static void onSetTg(lv_event_t*) { uiPrompt("Telegram bot token", "", false, onTgTok); }
-
-static void onAiKey(const char* t) { efektAnahtar(String(t)); }
-// Anahtar alma baglantisi: ekranda bag acilamaz, QR ile telefondan acilir
-static lv_obj_t* qrOv;
-static void onQrClose(lv_event_t*) {
-  if (qrOv) lv_obj_delete_async(qrOv);
-  qrOv = nullptr;
-}
-static void onAiQr(lv_event_t*) {
-  if (qrOv) return;
-  static const char* URL = "https://aistudio.google.com/apikey";
-  qrOv = lv_obj_create(lv_layer_top());
-  lv_obj_set_size(qrOv, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(qrOv, lv_color_hex(0x000000), 0);
-  lv_obj_set_style_bg_opa(qrOv, LV_OPA_90, 0);
-  lv_obj_set_style_border_width(qrOv, 0, 0);
-  lv_obj_set_style_radius(qrOv, 0, 0);
-  lv_obj_set_flex_flow(qrOv, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(qrOv, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(qrOv, 6, 0);
-  lv_obj_remove_flag(qrOv, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_t* qr = lv_qrcode_create(qrOv);
-  lv_qrcode_set_size(qr, 200);
-  lv_qrcode_set_dark_color(qr, lv_color_black());
-  lv_qrcode_set_light_color(qr, lv_color_white());
-  lv_qrcode_update(qr, URL, strlen(URL));
-  lv_obj_set_style_border_color(qr, lv_color_white(), 0);  // sessiz bolge (QR okunabilsin)
-  lv_obj_set_style_border_width(qr, 8, 0);
-  uiLabel(qrOv, "Ücretsiz Gemini anahtarı: telefonla okutun", &noto20, C_TEXT);
-  uiLabel(qrOv, "aistudio.google.com/apikey", &noto20, C_CYAN);
-  uiBtn(qrOv, "Kapat", true, onQrClose, LV_SIZE_CONTENT, 44);
-}
-
-static void onSetAi(lv_event_t*) {
-  uiPrompt("Gemini API anahtarı (alma: aistudio.google.com/apikey)", "", false, onAiKey);
-}
 
 static String tmpCity;
 static void onDistrict(const char* t) {
@@ -814,8 +689,6 @@ static void buildSet() {
   uiBtn(r, "Ekranı döndür", false, onSetRot);
   uiBtn(r, "Hava konumu", false, onSetLoc);
   uiBtn(r, "Telegram", false, onSetTg);
-  uiBtn(r, "Yapay zeka anahtarı", false, onSetAi);
-  uiBtn(r, "Anahtar al (QR)", false, onAiQr);
   uiBtn(r, "Yeniden başlat", false, onSetRestart);
   uiBtn(r, "WiFi'leri sil", false, onSetWipe);
 }
@@ -827,9 +700,9 @@ static void tickSet() {
   uint32_t up = millis() / 1000;
   char b[360];
   snprintf(b, sizeof(b),
-           "Ağ: %s   Sinyal: %d dBm\nIP: %s   Adres: %s.local\nSürüm: %s   Telegram: %s   Yapay zeka: %s\nÇalışma: %lu sa %lu dk   Bellek: %u KB boş",
+           "Ağ: %s   Sinyal: %d dBm\nIP: %s   Adres: %s.local\nSürüm: %s   Telegram: %s\nÇalışma: %lu sa %lu dk   Bellek: %u KB boş",
            WiFi.SSID().c_str(), WiFi.RSSI(), WiFi.localIP().toString().c_str(), "crowhub", FW_VERSION,
-           telegramConfigured() ? "açık" : "kapalı", efektAnahtarVar() ? "anahtar var" : "anahtar yok", (unsigned long)(up / 3600), (unsigned long)(up / 60 % 60), (unsigned)(ESP.getFreeHeap() / 1024));
+           telegramConfigured() ? "açık" : "kapalı", (unsigned long)(up / 3600), (unsigned long)(up / 60 % 60), (unsigned)(ESP.getFreeHeap() / 1024));
   uiSetText(setInfo, b);
 }
 
@@ -956,8 +829,7 @@ static void tick(lv_timer_t*) {
   uint32_t act = lv_tabview_get_tab_active(tv);
   tickHome();  // saat her zaman; ucuz
   if (act == 1) tickLamps();
-  if (act == 2) tickFx();
-  if (act == 3) tickSet();
+  if (act == 2) tickSet();
 }
 
 lv_obj_t* hubUiCreate() {
@@ -988,7 +860,6 @@ lv_obj_t* hubUiCreate() {
 
   tabHome = newTab("Ana");
   tabLamps = newTab("Lambalar");
-  tabFx = newTab("Efekt");
   tabSet = newTab("Ayar");
   // Sekme düğmeleri: siyah çerçeveli koyu düğme; seçili = pastel zemin + koyu yazı
   for (uint32_t i = 0; i < lv_obj_get_child_count(bar); i++) {
@@ -1055,11 +926,9 @@ lv_obj_t* hubUiCreate() {
   lv_obj_move_to_index(cardAlert, 0);  // sekmelerin ustunde
   buildHome();
   buildLamps();
-  buildFx();
   buildSet();
   placeTabs();
   lv_timer_create(tick, 500, nullptr);
   lv_timer_create(skyTick, 100, nullptr);
-  efektStart();
   return scr;
 }

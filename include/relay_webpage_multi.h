@@ -633,13 +633,13 @@ input.invalid { border-color: #cf6679 !important; background: #3a1f24 !important
 <div class="nav">
   <a href="/" id="nav1" onclick="route('/');return false;">Ana</a>
   <a href="/lamps" id="nav7" onclick="route('/lamps');return false;">Lambalar</a>
-  <a href="/efekt" id="nav8" onclick="route('/efekt');return false;">Efekt</a>
   <a href="/weather" id="nav3" onclick="route('/weather');return false;">Oto-Hava</a>
   <a href="/settings" id="nav2" onclick="route('/settings');return false;">Cihazlar</a>
   <a href="/sistem" id="nav9" onclick="route('/sistem');return false;">Sistem</a>
   <a href="/wifi" id="nav6" onclick="route('/wifi');return false;">WiFi</a>
   <a href="/log" id="nav4" onclick="route('/log');return false;">Kayıt</a>
   <a href="/notes" id="nav5" onclick="route('/notes');return false;">Notlar</a>
+  <a href="/info" id="nav10" onclick="route('/info');return false;">Donanım</a>
 </div>
 
 <div id="alertbar"></div>
@@ -648,6 +648,7 @@ input.invalid { border-color: #cf6679 !important; background: #3a1f24 !important
 
 <script>
 let DEVICES = [], STATUS = {}, CURRENT_WEATHER = {}, WEATHER_CONFIG = {};
+const RELAY_COUNT = {};  // cihaz adi -> role sayisi (son bilinen)
 // Zamanlayici ayarlarinin TEK kaynagi HUB (eskiden tarayicinin localStorage'i -
 // baska telefonda varsayilan degerler gorunuyordu)
 let SCHEDULE = {};
@@ -878,22 +879,17 @@ function renderControl() {
                 📶 WiFi: Yükleniyor...
             </div>
 
+            ${[1, 2, 3, 4].map(r => `<div id="rw${r}_${i}" style="${r > 2 ? 'display:none' : ''}">
             <div class="relay-row">
-                <div class="relay-label">R1</div>
-                <button class="btn off" id="b1_${i}" onclick="toggle(${i},1)">...</button>
+                <div class="relay-label">R${r}</div>
+                <button class="btn off" id="b${r}_${i}" onclick="toggle(${i},${r})">...</button>
             </div>
-            <div class="sched-info" id="p1_${i}"></div>
-
-            <div class="relay-row">
-                <div class="relay-label">R2</div>
-                <button class="btn off" id="b2_${i}" onclick="toggle(${i},2)">...</button>
-            </div>
-            <div class="sched-info" id="p2_${i}"></div>
+            <div class="sched-info" id="p${r}_${i}"></div>
+            </div>`).join('')}
 
             <div class="section" id="sec_${i}">
                 <div style="display:flex;gap:10px;justify-content:center;margin-bottom:10px;">
-                    <label><input type="radio" name="r${i}" value="1" checked onchange="loadProgValues(${i})"> Röle 1</label>
-                    <label><input type="radio" name="r${i}" value="2" onchange="loadProgValues(${i})"> Röle 2</label>
+                    ${[1, 2, 3, 4].map(r => `<label id="rl${r}_${i}" style="${r > 2 ? 'display:none' : ''}"><input type="radio" name="r${i}" value="${r}" ${r === 1 ? 'checked' : ''} onchange="loadProgValues(${i})"> Röle ${r}</label>`).join('')}
                 </div>
                 
                 <div style="display:flex;gap:5px;align-items:center">
@@ -982,8 +978,15 @@ function applyDomUpdates() {
                 }
             }
 
-            // Röle Durumları
-            for(let r = 1; r <= 2; r++) {
+            // Röle Durumları (cihazin role sayisi: status "relays", cevrimdisiyken son bilinen, yoksa 2)
+            if (s.relays) RELAY_COUNT[dev.name] = s.relays;
+            const rcnt = RELAY_COUNT[dev.name] || 2;
+            for(let r = 1; r <= 4; r++) {
+                const rw = document.getElementById("rw"+r+"_"+i);
+                if (rw) rw.style.display = r <= rcnt ? "" : "none";
+                const rlb = document.getElementById("rl"+r+"_"+i);
+                if (rlb) rlb.style.display = r <= rcnt ? "" : "none";
+                if (r > rcnt) continue;
                 const state = s[`r${r}_state`] || "OFFLINE";
                 const btn = document.getElementById("b"+r+"_"+i);
                 const prog = document.getElementById("p"+r+"_"+i);
@@ -1196,6 +1199,7 @@ function renderSettings() {
                     <button class="btn warning" onclick="restartHub()" title="Hub'ı yeniden başlat">🔄 Yeniden Başlat</button>
                     <button class="btn" onclick="scanDevices()" title="Ağdaki ESP01 cihazlarını mDNS ile tara" style="background:#2196F3">🔍 Cihaz Tara</button>
                     <button class="btn add-device-btn" onclick="add()" title="Yeni cihaz ekle">➕ Yeni Cihaz</button>
+                    <a class="btn" href="https://nedu41.github.io/ev-lamba/yukleyici/" target="_blank" rel="noopener" title="Yeni cihaza USB ile firmware yükle (Chrome/Edge)" style="background:#7a4fd0;text-decoration:none;display:inline-block">⬇️ Firmware Yükle</a>
                 </div>
             </div>
 
@@ -1611,21 +1615,6 @@ function confirmScanDevice(idx) {
         return;
     }
     postDevices(arr, `✓ ${name} eklendi`).then(() => renderSettings());
-}
-
-function loadAiKey() {
-    fetch("/api/aikey").then(r => r.json()).then(j => {
-        const e = document.getElementById("aiKeyState");
-        if (e) e.textContent = j.var ? "✓ Anahtar kayıtlı" : "Anahtar yok";
-    }).catch(() => {});
-}
-function saveAiKey() {
-    const v = document.getElementById("aiKey").value.trim();
-    if (!v) { toast("Anahtar boş", true); return; }
-    fetch("/api/aikey?set=" + encodeURIComponent(v)).then(() => {
-        document.getElementById("aiKey").value = "";
-        toast("✓ Anahtar kaydedildi"); loadAiKey();
-    }).catch(() => toast("✗ Kaydedilemedi", true));
 }
 
 function restartHub() {
@@ -2074,8 +2063,7 @@ function renderHome() {
         <div id="hWx2" style="position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);padding:6px 12px;font-size:.9em"></div>
     </div>
     <div class="settings-container"><div style="color:#9a9aae;font-size:.85em">Dünya haberleri</div><div id="hNews" style="margin-top:6px">Haberler yükleniyor…</div></div>
-    <div class="settings-container"><div style="color:#9a9aae;font-size:.85em;margin-bottom:6px">Lambalar</div><div id="hLamps"></div></div>
-    <div class="settings-container"><div style="color:#9a9aae;font-size:.85em;margin-bottom:6px">Yapay zeka efektleri</div><div id="hFx"></div></div>`;
+    <div class="settings-container"><div style="color:#9a9aae;font-size:.85em;margin-bottom:6px">Lambalar</div><div id="hLamps"></div></div>`;
     refreshHome();
 }
 function refreshHome() {
@@ -2102,7 +2090,7 @@ function refreshHome() {
         let l = "";
         DEVICES.forEach((d, i) => {
             const st = STATUS[d.name] || {};
-            [1, 2].forEach(r => {
+            [1, 2, 3, 4].forEach(r => {
                 const s = st["r" + r + "_state"];
                 if (s === undefined) return;
                 const on = s === "ON", off = s === "OFFLINE" || s === "ERR";
@@ -2112,12 +2100,6 @@ function refreshHome() {
         set("hLamps", l || "Henüz cihaz yok.");
     }).catch(() => {});
     fetch("/api/news").then(r => r.json()).then(j => { NEWS_ITEMS = j.items || []; showNews(); }).catch(() => {});
-    fetch("/api/efekt/durum").then(r => r.json()).then(j => {
-        let h = j.ok ? "" : `<div style="color:#ff9a9a;margin-bottom:6px">PC köprüsü yok (efekt_koprusu.py açık olmalı)</div>`;
-        (j.liste || []).forEach(ad => h += `<button class="btn off" style="margin:3px" ${j.ok ? '' : 'disabled'} onclick="fxPlay('${escHtml(ad)}')">${escHtml(ad)}</button>`);
-        h += ` <a href="/efekt" onclick="route('/efekt');return false;" style="color:#7fe0dc">Tümü / yeni efekt</a>`;
-        set("hFx", h);
-    }).catch(() => {});
 }
 function skyLoop() {
     const im = document.getElementById("hSky");
@@ -2134,73 +2116,6 @@ function toggleHome(i, r) {
     const dev = DEVICES[i], st = STATUS[dev.name] || {};
     const action = st["r" + r + "_state"] === "ON" ? "off" : "on";
     sendControl(dev.ip, r, action).then(() => setTimeout(refreshHome, 600)).catch(() => toast("✗ " + dev.name + ": cihaz yanıt vermiyor", true));
-}
-
-// ===================== EFEKT SAYFASI =====================
-function fxPlay(ad) { fetch("/api/efekt/oynat?ad=" + encodeURIComponent(ad)).then(() => toast("▶ " + ad + " ekranda açıldı")); }
-function renderEfekt() {
-    document.getElementById("content").innerHTML = `
-    <div class="settings-container">
-        <h3>🎞️ Yapay zeka efektleri</h3>
-        <div id="fxStat" style="margin-bottom:8px">…</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <input type="text" id="fxPrompt" class="compact-input" style="flex:1;min-width:200px" placeholder="Nasıl bir efekt? (ör. yağmurda neon şehir)">
-            <button class="btn" onclick="fxNew()">Üret ve ekranda göster</button>
-        </div>
-        <div style="color:#9a9aae;font-size:.8em;margin-top:4px">Efekt cihazın ekranında oynar (ekrana dokununca kapanır). Üretim ~30 sn sürebilir.</div>
-    </div>
-    <div class="settings-container"><h3>Kayıtlı efektler</h3><div id="fxList"></div>
-        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-            <input type="text" id="fxSaveName" class="compact-input" placeholder="Son efektin adı">
-            <button class="btn" onclick="fxSave()">Son efekti kaydet</button>
-        </div>
-    </div>
-    <div class="settings-container"><h3>Ayar</h3>
-        <label>Hız <span id="fxHizL">1.0x</span></label><input type="range" id="fxHiz" min="10" max="400" value="100" oninput="fxTune()" style="width:100%">
-        <label>Işık <span id="fxIsikL">%100</span></label><input type="range" id="fxIsik" min="10" max="200" value="100" oninput="fxTune()" style="width:100%">
-        <button class="btn off" onclick="fetch('/api/efekt/durdur')">Durdur</button>
-    </div>
-    <div class="settings-container"><h3>Gemini API anahtarı</h3>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-            <input type="password" id="aiKey" class="compact-input" placeholder="API anahtarı yapıştırın">
-            <button class="btn" onclick="saveAiKey()">Kaydet</button>
-            <span id="aiKeyState">…</span>
-        </div>
-        <div style="margin-top:6px"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:#7fe0dc">Ücretsiz anahtar al: aistudio.google.com/apikey</a></div>
-    </div>`;
-    loadAiKey(); refreshEfekt();
-}
-function refreshEfekt() {
-    if (location.pathname !== "/efekt") return;
-    fetch("/api/efekt/durum").then(r => r.json()).then(j => {
-        const d = {bos: "boşta", uretiyor: "efekt üretiliyor…", oynuyor: "oynuyor" + (j.ad ? ": " + j.ad : ""), hata: "son üretim başarısız"}[j.durum] || "";
-        const s = document.getElementById("fxStat");
-        if (s) s.innerHTML = j.ok ? `<span style="color:#8fe0a0">● Köprü bağlı</span> — ${d}` : `<span style="color:#ff9a9a">● PC köprüsü yok</span> (bilgisayarda efekt_koprusu.py açık olmalı)`;
-        const l = document.getElementById("fxList");
-        if (l) l.innerHTML = (j.liste || []).map(ad => `<span style="display:inline-block;margin:3px"><button class="btn off" onclick="fxPlay('${escHtml(ad)}')">${escHtml(ad)}</button><button class="btn" style="background:#442" title="Sil" onclick="fxDel('${escHtml(ad)}')">✕</button></span>`).join("") || "Henüz kayıtlı efekt yok";
-    }).catch(() => {});
-}
-function fxNew() {
-    const p = document.getElementById("fxPrompt").value.trim();
-    if (!p) { toast("Efekt cümlesi boş", true); return; }
-    fetch("/api/efekt/uret?p=" + encodeURIComponent(p)).then(() => toast("⏳ Üretiliyor, ekranda gösterilecek"));
-}
-function fxSave() {
-    const n = document.getElementById("fxSaveName").value.trim();
-    if (!n) { toast("Ad girin", true); return; }
-    fetch("/api/efekt/kaydet?ad=" + encodeURIComponent(n)).then(() => { toast("✓ Kaydedildi"); setTimeout(refreshEfekt, 800); });
-}
-function fxDel(ad) {
-    if (!confirm('"' + ad + '" silinsin mi?')) return;
-    fetch("/api/efekt/sil?ad=" + encodeURIComponent(ad)).then(() => setTimeout(refreshEfekt, 800));
-}
-let fxTuneT = null;
-function fxTune() {
-    const h = document.getElementById("fxHiz").value / 100, i = document.getElementById("fxIsik").value / 100;
-    document.getElementById("fxHizL").textContent = h.toFixed(1) + "x";
-    document.getElementById("fxIsikL").textContent = "%" + Math.round(i * 100);
-    clearTimeout(fxTuneT);
-    fxTuneT = setTimeout(() => fetch("/api/efekt/ayar?hiz=" + h + "&isik=" + i), 250);
 }
 
 // ===================== SİSTEM SAYFASI (ekrandaki Ayar gibi) =====================
@@ -2242,8 +2157,6 @@ function renderSistem() {
     <div class="settings-container"><h3>Hızlı bağlantılar</h3>
         <button class="btn" onclick="route('/wifi')">WiFi ağları</button>
         <button class="btn" onclick="route('/weather')">Hava konumu</button>
-        <button class="btn" onclick="route('/efekt')">Yapay zeka anahtarı</button>
-        <div style="margin-top:6px"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:#a070ff">Ücretsiz anahtar al: aistudio.google.com/apikey</a></div>
         <button class="btn warning" onclick="restartHub()">Yeniden başlat</button>
     </div>`;
     fetch("/api/sistem").then(r => r.json()).then(j => {
@@ -2313,11 +2226,116 @@ function sysTg() {
     fetch("/api/telegram?token=" + encodeURIComponent(t) + "&chat=" + encodeURIComponent(c)).then(() => { toast("✓ Telegram kaydedildi"); document.getElementById("tgTok").value = ""; renderSistem(); });
 }
 
+// --- Donanim sayfasi icerigi: CrowPanel 7" HUB ---
+const HW_FEATURES = [
+    ["Dokunmatik ekran", "7\" 800×480 ekranda Ana (saat, hava, haber), Lambalar ve Ayar sayfaları; yatay / dikey kullanım."],
+    ["WiFi kurulumu", "Bilgisayarsız: ekrandan ağ tara, seç, ekran klavyesiyle şifre gir. Bağlanamazsa kurulum ekranına döner; kayıtlı ağlar sırayla denenir."],
+    ["Lamba / röle kontrolü", "ESP-01S röle düğümleri ve 4 kanallı LC röle modülü; ekrandan ve web'den aç/kapa, düğüm başına zamanlayıcı."],
+    ["Otomasyon", "Gün doğumu / batımında, sabit saatte ya da hava kararınca lambaları açıp kapatır; rüzgar uyarısı."],
+    ["Hava durumu", "Open-Meteo: sıcaklık, rüzgar, nem, 7 günlük tahmin; ekranda saate ve havaya göre canlı gökyüzü."],
+    ["Uyarılar", "Hava (fırtına, kuvvetli rüzgar, yoğun yağış) ve deprem (AFAD) uyarı bandı."],
+    ["Haberler", "Ekranın altında kayan haber şeridi."],
+    ["Yazılım güncelleme", "Sistem sekmesinden GitHub'dan güncelleme; geliştirmede OTA."],
+    ["Telegram", "Bot ve sohbet kimliği Ayar sayfasından girilir; açılış ve uyarı bildirimleri."],
+    ["Diğer", "Notlar, olay kaydı, parlaklık / kontrast / canlılık ayarı, röle düğümleri için web'den firmware yükleyici, MQTT."],
+];
+const HW_USAGE = [
+    "İlk açılış: ekranda WiFi ağını seç, ekran klavyesiyle şifreyi gir.",
+    "Web arayüzü: aynı ağdan <b>http://crowhub.local</b> (ya da ekranda görünen IP).",
+    "Konum ve Telegram: ekranda <b>Ayar</b> sayfasından ya da web'de <b>Oto-Hava</b> / <b>Sistem</b> sekmelerinden.",
+    "Lambalar: <b>Cihazlar</b> sekmesinden röle düğümlerini ekle; ekranda <b>Lambalar</b> sayfasından kontrol et.",
+    "Ekran ayarları ve güncelleme: web'de <b>Sistem</b> sekmesi.",
+];
+const HW_CHANGELOG = [
+    ["7.4.0", "2026-10-20", ["Donanım sayfası: özellikler, kullanım, sürüm geçmişi, kart bilgisi, canlı durum"]],
+    ["7.3.0", "2026-10-14", ["Yapay zeka efektleri kaldırıldı (flash %92)", "4 röleli düğüm desteği (2×2 lamba kartı, 4 röle zamanlayıcı)", "Cihazlar sayfasında Firmware Yükle bağlantısı"]],
+    ["7.2.1", "2026-10-13", ["Röle düğümleri için 8 kart firmware'i ve hazır imajlar", "GitHub'dan güncelleme uçtan uca denendi", "Yayın imajlarından kişisel bilgiler temizlendi"]],
+    ["Önceki", "2026-10-13", ["Canlı gökyüzü, hava kutuları, 7 günlük tahmin, kayan haber şeridi, nem", "Lambalar kompakt kartlar, kontrast / canlılık ayarı, uyarı bandı, kayıtlı WiFi ağları"]],
+    ["7.0.0", "2026-10-12", ["ev-lamba Merkezi HUB arka ucu + LVGL dokunmatik arayüz (Ana / Lambalar / Ayar)", "Dokunmatik WiFi kurulumu; Telegram ve hava konumu ekrandan"]],
+];
+const HW_ROWS = [
+    ["Kart", "Elecrow CrowPanel ESP32 HMI 7\" Basic, SKU DIS08070H, V3.0", "Ö"],
+    ["Çip", "ESP32-S3 (QFN56) rev v0.2, 8 MB gömülü PSRAM", "Ö"],
+    ["Flaş", "4 MB quad", "Ö"],
+    ["Ekran", "800×480 RGB565 paralel, arka ışık IO2", "Ö"],
+    ["Dokunmatik", "GT911 0x5D (I2C IO19/IO20), PCA9557 0x18 üzerinden RST/INT", "B"],
+    ["Hoparlör", "I2S: SDIN IO17, LRCLK IO18, BCLK IO42 (kullanılmıyor)", "B"],
+    ["Diğer", "TF kart yuvası (SPI IO10-13), USB-C (CH340, UART0)", "B"],
+    ["Röle düğümleri", "ESP-01S / LC-ESP01-4R-12V — HTTP komut + UDP durum", "Ö"],
+];
+// --- DONANIM SAYFASI (ortak): ozellikler, kullanim, surum gecmisi, kart/modul tablosu, canli durum (/hw_info).
+// Projeye ozel icerik: HW_FEATURES, HW_USAGE, HW_CHANGELOG, HW_ROWS (bu blogun ustunde).
+// Ses karti yalniz /hw_info "ses_on" bildirirse, dokunmatik satiri yalniz "touch" bildirirse gorunur.
+const RESET_TXT = {1:"güç verildi", 3:"yazılım", 4:"çökme (panic)", 5:"kesme bekçisi", 6:"görev bekçisi", 7:"bekçi", 8:"uyku", 9:"düşük gerilim"};
+let infoTimer = null;
+
+function renderInfo() {
+    const feats = HW_FEATURES.map(f => `<li style="margin-bottom:6px"><b style="color:#03dac6">${f[0]}</b> — ${escHtml(f[1])}</li>`).join('');
+    const usage = HW_USAGE.map(u => `<li style="margin-bottom:6px">${u}</li>`).join('');
+    const changes = HW_CHANGELOG.map(([v, d, items]) => `<div style="margin-bottom:10px"><b style="color:#ff9800">${/^\d/.test(v) ? 'v' + v : v}</b>
+        <small style="color:#888">${d}</small><ul style="padding-left:18px;margin:4px 0 0">${items.map(x => `<li>${escHtml(x)}</li>`).join('')}</ul></div>`).join('');
+    const rows = HW_ROWS.map(r => `<tr><td style="color:#888;padding:4px 8px 4px 0;white-space:nowrap">${r[0]}</td>
+        <td style="padding:4px 0">${escHtml(r[1])} <small style="color:${r[2]==='Ö'?'#03dac6':'#ff9800'}">[${r[2]}]</small></td></tr>`).join('');
+    document.getElementById("content").innerHTML = `
+    <div class="settings-container"><h3>✨ Özellikler</h3>
+        <ul style="padding-left:18px;margin:0;font-size:14px;line-height:1.45">${feats}</ul></div>
+    <div class="settings-container"><h3>📖 Kullanım</h3>
+        <ol style="padding-left:18px;margin:0;font-size:14px;line-height:1.45">${usage}</ol></div>
+    <div class="settings-container"><h3>📝 Sürüm geçmişi</h3>
+        <div style="font-size:14px;line-height:1.45">${changes}</div></div>
+    <div class="settings-container"><h3>📟 Kart ve modüller</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:14px">${rows}</table>
+        <small style="color:#888">[Ö] kartta ölçüldü · [B] belgeden, kartta doğrulanmadı</small></div>
+    <div class="settings-container"><h3>📊 Canlı durum</h3>
+        <div id="hwLive" style="font-size:14px;line-height:1.7">Yükleniyor...</div></div>
+    <div class="settings-container" id="sesCard" style="display:none"><h3>🔊 Ses</h3>
+        <label><input type="checkbox" id="sesOn" onchange="sesSet('on', this.checked?1:0)"> Ses açık</label><br>
+        <label><input type="checkbox" id="sesAcl" onchange="sesSet('acl', this.checked?1:0)"> Açılış melodisi</label><br>
+        <label>Seviye <input type="range" id="sesLv" min="1" max="10" onchange="sesSet('lv', this.value)"> <span id="sesLvT"></span></label><br>
+        <button class="btn" style="flex-grow:0;margin-top:8px" onclick="sesSet('test',1)">Deneme sesi</button></div>`;
+    loadHw(true);
+    if (infoTimer) clearInterval(infoTimer);
+    infoTimer = setInterval(() => { if (location.pathname === "/info") loadHw(false); else { clearInterval(infoTimer); infoTimer = null; } }, 5000);
+}
+
+function loadHw(first) {
+    fetch("/hw_info").then(r => r.json()).then(d => {
+        const kb = v => (v / 1024).toFixed(0) + " KB", mb = v => (v / 1048576).toFixed(1) + " MB";
+        const up = d.uptime, upTxt = `${Math.floor(up/86400)}g ${Math.floor(up%86400/3600)}s ${Math.floor(up%3600/60)}dk`;
+        const dot = ok => `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:${ok?'#4caf50':'#cf3030'};box-shadow:0 0 6px ${ok?'#4caf50':'#cf3030'}"></span>`;
+        document.getElementById("hwLive").innerHTML = `
+            Çip: ${escHtml(d.chip)} rev ${d.rev}, ${d.cores} çekirdek, ${d.mhz} MHz<br>
+            Flaş: ${mb(d.flash)} · PSRAM: ${d.psram ? mb(d.psram) + (d.psram_free != null ? " (boş " + mb(d.psram_free) + ")" : "") : "yok"}<br>
+            Uygulama: ${kb(d.sketch)} (boş yuva ${kb(d.sketch_free)})<br>
+            Bellek: boş ${kb(d.heap)} · en büyük blok ${kb(d.heap_blk)} · en düşük ${kb(d.heap_min)}<br>
+            Çalışma: ${upTxt} · son açılış: ${RESET_TXT[d.reset] || d.reset}<br>
+            WiFi: ${escHtml(d.mac)} · ${d.rssi} dBm<br>
+            ${d.touch !== undefined ? `Dokunmatik: ${dot(d.touch)}${d.touch ? "GT911 0x" + d.touch.toString(16).toUpperCase() : "bulunamadı"}<br>` : ''}
+            Sürüm: ${escHtml(d.fw)} · SDK ${escHtml(d.sdk)}`;
+        if (first && d.ses_on !== undefined) {
+            document.getElementById("sesCard").style.display = "";
+            document.getElementById("sesOn").checked = d.ses_on;
+            document.getElementById("sesAcl").checked = d.ses_acl;
+            document.getElementById("sesLv").value = d.ses_lv;
+            document.getElementById("sesLvT").textContent = d.ses_lv;
+        }
+    }).catch(() => { document.getElementById("hwLive").textContent = "✗ Bilgi alınamadı"; });
+}
+
+function sesSet(k, v) {
+    fetch(`/ses?${k}=${v}`).then(r => r.json()).then(j => {
+        if (k === 'lv') document.getElementById("sesLvT").textContent = j.lv;
+        if (k !== 'test') toast("✓ Ses ayarı kaydedildi");
+    }).catch(() => toast("✗ Ses ayarı gönderilemedi", true));
+}
+
 // --- NAVİGASYON ---
 function navigate() {
     const p = location.pathname;
     document.querySelectorAll('.nav a').forEach(a => a.className = (a.getAttribute('href') === p || (p === '/device' && a.getAttribute('href') === '/settings')) ? 'active' : '');
-    if(p === "/settings") {
+    if(p === "/info") {
+        renderInfo();
+    } else if(p === "/settings") {
         fetchDevices().then(renderSettings);
     } else if(p === "/log") {
         renderEvents();
@@ -2327,8 +2345,6 @@ function navigate() {
         renderNotes();
     } else if(p === "/wifi") {
         renderWifi();
-    } else if(p === "/efekt") {
-        renderEfekt();
     } else if(p === "/sistem") {
         renderSistem();
     } else if(p === "/device") {
@@ -2354,7 +2370,6 @@ window.onload = function() {
     setInterval(() => { if (location.pathname === '/log') renderEvents(); }, 10000);
     setInterval(refreshHome, 20000);
     skyLoop();
-        setInterval(refreshEfekt, 3000);
 };
 </script>
 </body>
